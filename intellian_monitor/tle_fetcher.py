@@ -1,9 +1,17 @@
 import json
+import math
 import os
 import time
+from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 
 import requests
+
+try:
+    from sgp4.api import Satrec, jday
+    HAS_SGP4 = True
+except ImportError:
+    HAS_SGP4 = False
 
 
 class TLEFetcher:
@@ -119,3 +127,51 @@ class TLEFetcher:
     @property
     def satellite_count(self) -> int:
         return len(self._tle_by_norad)
+
+    @staticmethod
+    def compute_sat_subpoint(
+        line1: str, line2: str, dt_utc: Optional[datetime] = None
+    ) -> Optional[Tuple[float, float, float]]:
+        """Compute (sat_lat_deg, sat_lon_deg, sat_alt_km) from TLE using SGP4."""
+        if not HAS_SGP4 or not line1 or not line2:
+            return None
+
+        dt = dt_utc or datetime.now(timezone.utc)
+        sat = Satrec.twoline2rv(line1, line2)
+        jd, fr = jday(
+            dt.year,
+            dt.month,
+            dt.day,
+            dt.hour,
+            dt.minute,
+            dt.second + dt.microsecond / 1e6,
+        )
+        err, r, _ = sat.sgp4(jd, fr)
+        if err != 0:
+            return None
+
+        # TEME -> ECEF via GMST
+        d = (jd - 2451545.0) + fr
+        gmst = math.radians((280.46061837 + 360.98564736629 * d) % 360.0)
+        cos_g = math.cos(gmst)
+        sin_g = math.sin(gmst)
+        x_ecef = r[0] * cos_g + r[1] * sin_g
+        y_ecef = -r[0] * sin_g + r[1] * cos_g
+        z_ecef = r[2]
+
+        # ECEF -> WGS84 geodetic (km)
+        a = 6378.137
+        f = 1.0 / 298.257223563
+        e2 = f * (2.0 - f)
+        r_xy = math.hypot(x_ecef, y_ecef)
+        lon = math.degrees(math.atan2(y_ecef, x_ecef))
+        lat_rad = math.atan2(z_ecef, r_xy * (1.0 - e2))
+        for _ in range(4):
+            sin_lat = math.sin(lat_rad)
+            n = a / math.sqrt(1.0 - e2 * sin_lat * sin_lat)
+            lat_rad = math.atan2(z_ecef + e2 * n * sin_lat, r_xy)
+        sin_lat = math.sin(lat_rad)
+        n = a / math.sqrt(1.0 - e2 * sin_lat * sin_lat)
+        alt_km = r_xy / math.cos(lat_rad) - n
+
+        return (round(math.degrees(lat_rad), 6), round(lon, 6), round(alt_km, 3))

@@ -52,6 +52,15 @@ def print_status(
         )
         table.add_row(
             "1. UT & Sat Coords",
+            "Satellite (Lat, Lon, Alt)",
+            "{}, {}, {} km".format(
+                telemetry.get("sat_lat"),
+                telemetry.get("sat_lon"),
+                telemetry.get("sat_alt_km"),
+            ),
+        )
+        table.add_row(
+            "1. UT & Sat Coords",
             "Pointing (Azimuth / Elevation)",
             "{} deg / {} deg".format(
                 telemetry.get("sat_azimuth_deg"), telemetry.get("sat_elevation_deg")
@@ -90,11 +99,13 @@ def print_status(
         console.print(table)
     else:
         print(
-            "[{}] UT=({}, {}) Sat={} Az/El=({}/{}) SNR={}dB TLEs={} Ping={}".format(
+            "[{}] UT=({}, {}) Sat={} SatPos=({}, {}) Az/El=({}/{}) SNR={}dB TLEs={} Ping={}".format(
                 telemetry.get("timestamp_utc"),
                 telemetry.get("ut_lat"),
                 telemetry.get("ut_lon"),
                 telemetry.get("sat_name") or telemetry.get("sat_id"),
+                telemetry.get("sat_lat"),
+                telemetry.get("sat_lon"),
                 telemetry.get("sat_azimuth_deg"),
                 telemetry.get("sat_elevation_deg"),
                 telemetry.get("snr_db"),
@@ -102,6 +113,22 @@ def print_status(
                 {k: v.get("last_ms") for k, v in ping_snap.items()},
             )
         )
+
+
+def enrich_with_tle(telemetry: Dict[str, Any], tle_fetcher: TLEFetcher) -> None:
+    """Attach matching TLE lines and compute satellite lat/lon/alt if missing."""
+    tle_match = tle_fetcher.find_satellite(
+        sat_id=telemetry.get("sat_id"), sat_name=telemetry.get("sat_name")
+    )
+    if not tle_match:
+        return
+
+    telemetry["tle_line1"] = tle_match[1]
+    telemetry["tle_line2"] = tle_match[2]
+    if telemetry.get("sat_lat") is None or telemetry.get("sat_lon") is None:
+        subpoint = tle_fetcher.compute_sat_subpoint(tle_match[1], tle_match[2])
+        if subpoint is not None:
+            telemetry["sat_lat"], telemetry["sat_lon"], telemetry["sat_alt_km"] = subpoint
 
 
 def main() -> int:
@@ -199,12 +226,7 @@ def main() -> int:
 
     if args.once:
         telemetry = client.fetch_telemetry()
-        tle_match = tle_fetcher.find_satellite(
-            sat_id=telemetry.get("sat_id"), sat_name=telemetry.get("sat_name")
-        )
-        if tle_match:
-            telemetry["tle_line1"] = tle_match[1]
-            telemetry["tle_line2"] = tle_match[2]
+        enrich_with_tle(telemetry, tle_fetcher)
         storage.save_telemetry(telemetry)
 
         ping_snap: Dict[str, Dict[str, Any]] = {}
@@ -260,12 +282,7 @@ def main() -> int:
                     pass
 
             telemetry = client.fetch_telemetry()
-            tle_match = tle_fetcher.find_satellite(
-                sat_id=telemetry.get("sat_id"), sat_name=telemetry.get("sat_name")
-            )
-            if tle_match:
-                telemetry["tle_line1"] = tle_match[1]
-                telemetry["tle_line2"] = tle_match[2]
+            enrich_with_tle(telemetry, tle_fetcher)
 
             storage.save_telemetry(telemetry)
             ping_snap = pinger.get_snapshot() if ping_cfg.get("enabled", True) else {}

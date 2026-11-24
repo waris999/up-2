@@ -161,6 +161,9 @@ class IntellianClient:
 
         sat_id = _find_first_value(merged_raw, ("sat_id", "satellite_id", "norad_id", "sv_id"))
         sat_name = _find_first_value(merged_raw, ("sat_name", "satellite_name", "satellite"))
+        sat_lat = _to_float(_find_first_value(merged_raw, ("sat_lat", "satellite_lat", "satellite_latitude", "subpoint_lat")))
+        sat_lon = _to_float(_find_first_value(merged_raw, ("sat_lon", "satellite_lon", "satellite_longitude", "subpoint_lon")))
+        sat_alt_km = _to_float(_find_first_value(merged_raw, ("sat_alt", "sat_alt_km", "satellite_alt", "satellite_altitude")))
         sat_az = _to_float(_find_first_value(merged_raw, ("azimuth", "az", "sat_az", "pointing_az")))
         sat_el = _to_float(_find_first_value(merged_raw, ("elevation", "el", "sat_el", "pointing_el")))
 
@@ -177,6 +180,9 @@ class IntellianClient:
             "ut_alt_m": ut_alt_m,
             "sat_id": str(sat_id) if sat_id is not None else None,
             "sat_name": str(sat_name) if sat_name is not None else None,
+            "sat_lat": sat_lat,
+            "sat_lon": sat_lon,
+            "sat_alt_km": sat_alt_km,
             "sat_azimuth_deg": sat_az,
             "sat_elevation_deg": sat_el,
             "snr_db": snr_db,
@@ -206,6 +212,9 @@ class MockIntellianClient:
             "ut_alt_m": 12.5,
             "sat_id": "44057",
             "sat_name": "ONEWEB-0012",
+            "sat_lat": round(14.5 + 3.0 * math.sin(t / 12.0), 6),
+            "sat_lon": round(101.2 + 3.0 * math.cos(t / 12.0), 6),
+            "sat_alt_km": 1200.0,
             "sat_azimuth_deg": az,
             "sat_elevation_deg": el,
             "snr_db": snr,

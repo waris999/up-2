@@ -50,6 +50,9 @@ class TelemetryStorage:
                         ut_alt_m REAL,
                         sat_id TEXT,
                         sat_name TEXT,
+                        sat_lat REAL,
+                        sat_lon REAL,
+                        sat_alt_km REAL,
                         sat_azimuth_deg REAL,
                         sat_elevation_deg REAL,
                         snr_db REAL,
@@ -62,6 +65,21 @@ class TelemetryStorage:
                     )
                     """
                 )
+                # Migrate existing DBs if sat_lat/sat_lon/sat_alt_km columns are missing
+                existing_cols = {
+                    row[1] for row in cur.execute("PRAGMA table_info(telemetry_logs)").fetchall()
+                }
+                for col_name, col_type in (
+                    ("sat_lat", "REAL"),
+                    ("sat_lon", "REAL"),
+                    ("sat_alt_km", "REAL"),
+                ):
+                    if col_name not in existing_cols:
+                        cur.execute(
+                            "ALTER TABLE telemetry_logs ADD COLUMN {} {}".format(
+                                col_name, col_type
+                            )
+                        )
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS ping_logs (
@@ -110,10 +128,11 @@ class TelemetryStorage:
                     """
                     INSERT INTO telemetry_logs (
                         timestamp_utc, source, ut_lat, ut_lon, ut_alt_m,
-                        sat_id, sat_name, sat_azimuth_deg, sat_elevation_deg,
+                        sat_id, sat_name, sat_lat, sat_lon, sat_alt_km,
+                        sat_azimuth_deg, sat_elevation_deg,
                         snr_db, cn0_dbhz, rssi_dbm, link_state,
                         tle_line1, tle_line2, raw_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         ts,
@@ -123,6 +142,9 @@ class TelemetryStorage:
                         record.get("ut_alt_m"),
                         record.get("sat_id"),
                         record.get("sat_name"),
+                        record.get("sat_lat"),
+                        record.get("sat_lon"),
+                        record.get("sat_alt_km"),
                         record.get("sat_azimuth_deg"),
                         record.get("sat_elevation_deg"),
                         record.get("snr_db"),
@@ -150,6 +172,9 @@ class TelemetryStorage:
                     "ut_alt_m",
                     "sat_id",
                     "sat_name",
+                    "sat_lat",
+                    "sat_lon",
+                    "sat_alt_km",
                     "sat_azimuth_deg",
                     "sat_elevation_deg",
                     "snr_db",
