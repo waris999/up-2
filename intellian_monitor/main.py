@@ -212,13 +212,7 @@ def main() -> int:
 
     if tle_cfg.get("enabled", True):
         try:
-            tle_res = tle_fetcher.refresh(force=False)
-            if tle_res.get("refreshed"):
-                storage.save_tle_snapshot(
-                    tle_res["satellite_count"],
-                    tle_res.get("tle_path"),
-                    tle_res.get("json_path"),
-                )
+            tle_fetcher.refresh(force=False)
         except Exception as exc:
             print("Warning: TLE refresh failed ({}), using cached TLEs: {}".format(
                 exc, tle_fetcher.satellite_count
@@ -227,11 +221,11 @@ def main() -> int:
     if args.once:
         telemetry = client.fetch_telemetry()
         enrich_with_tle(telemetry, tle_fetcher)
-        storage.save_telemetry(telemetry)
 
         ping_snap: Dict[str, Dict[str, Any]] = {}
         if ping_cfg.get("enabled", True):
-            for target in ping_cfg.get("targets", []):
+            targets = ping_cfg.get("targets", [])
+            for target in targets:
                 res = ping_once(target, timeout_sec=ping_cfg.get("timeout_sec", 1.0))
                 storage.save_ping(res)
                 ping_snap[target] = {
@@ -241,7 +235,12 @@ def main() -> int:
                     "last_ms": res["rtt_ms"],
                     "avg_ms": res["rtt_ms"],
                 }
+            if len(targets) >= 1:
+                telemetry["ping_cnx_ms"] = ping_snap[targets[0]].get("last_ms")
+            if len(targets) >= 2:
+                telemetry["ping_internet_ms"] = ping_snap[targets[1]].get("last_ms")
 
+        storage.save_telemetry(telemetry)
         print_status(telemetry, tle_fetcher.satellite_count, ping_snap)
         return 0
 
@@ -264,31 +263,33 @@ def main() -> int:
     if ping_cfg.get("enabled", True):
         pinger.start()
 
-    poll_interval = float(int_cfg.get("poll_interval_sec", 2.0))
+    poll_interval = float(int_cfg.get("poll_interval_sec", 1.0))
+    targets = ping_cfg.get("targets", ["192.168.100.1", "8.8.8.8"])
     print("Starting Intellian Monitor... Press Ctrl+C to stop.")
 
     try:
         while not stop_requested:
+            loop_start = time.time()
             if tle_cfg.get("enabled", True) and tle_fetcher.needs_refresh():
                 try:
-                    tle_res = tle_fetcher.refresh(force=False)
-                    if tle_res.get("refreshed"):
-                        storage.save_tle_snapshot(
-                            tle_res["satellite_count"],
-                            tle_res.get("tle_path"),
-                            tle_res.get("json_path"),
-                        )
+                    tle_fetcher.refresh(force=False)
                 except Exception:
                     pass
 
             telemetry = client.fetch_telemetry()
             enrich_with_tle(telemetry, tle_fetcher)
 
-            storage.save_telemetry(telemetry)
             ping_snap = pinger.get_snapshot() if ping_cfg.get("enabled", True) else {}
+            if len(targets) >= 1 and targets[0] in ping_snap:
+                telemetry["ping_cnx_ms"] = ping_snap[targets[0]].get("last_ms")
+            if len(targets) >= 2 and targets[1] in ping_snap:
+                telemetry["ping_internet_ms"] = ping_snap[targets[1]].get("last_ms")
+
+            storage.save_telemetry(telemetry)
             print_status(telemetry, tle_fetcher.satellite_count, ping_snap)
 
-            time.sleep(poll_interval)
+            elapsed = time.time() - loop_start
+            time.sleep(max(0.05, poll_interval - elapsed))
     finally:
         pinger.stop()
         print("Stopped.")

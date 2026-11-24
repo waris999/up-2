@@ -5,7 +5,7 @@
     "password": "",
     "verify_ssl": false,
     "timeout_sec": 3.0,
-    "poll_interval_sec": 2.0,
+    "poll_interval_sec": 1.0,
     "endpoints": [
       "/api/v1/status",
       "/api/v1/ut/status",
