@@ -1,0 +1,42 @@
+{
+  "intellian": {
+    "base_url": "http://192.168.100.1",
+    "username": "",
+    "password": "",
+    "verify_ssl": false,
+    "timeout_sec": 3.0,
+    "poll_interval_sec": 2.0,
+    "endpoints": [
+      "/api/v1/status",
+      "/api/v1/ut/status",
+      "/api/v1/antenna/status",
+      "/api/v1/modem/status",
+      "/api/v1/gnss/status",
+      "/api/status",
+      "/api/telemetry",
+      "/status.json"
+    ]
+  },
+  "tle": {
+    "enabled": true,
+    "celestrak_tle_url": "https://celestrak.org/NORAD/elements/gp.php?GROUP=oneweb&FORMAT=TLE",
+    "celestrak_json_url": "https://celestrak.org/NORAD/elements/gp.php?GROUP=oneweb&FORMAT=JSON",
+    "refresh_interval_sec": 21600,
+    "timeout_sec": 30.0
+  },
+  "ping": {
+    "enabled": true,
+    "targets": [
+      "192.168.100.1",
+      "8.8.8.8"
+    ],
+    "interval_sec": 1.0,
+    "timeout_sec": 1.0
+  },
+  "storage": {
+    "data_dir": "data",
+    "sqlite_db": "data/intellian_telemetry.db",
+    "save_csv": true,
+    "save_jsonl": true
+  }
+}
