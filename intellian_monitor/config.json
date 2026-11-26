@@ -7,14 +7,10 @@
     "timeout_sec": 3.0,
     "poll_interval_sec": 1.0,
     "endpoints": [
-      "/api/v1/status",
-      "/api/v1/ut/status",
-      "/api/v1/antenna/status",
-      "/api/v1/modem/status",
-      "/api/v1/gnss/status",
-      "/api/status",
-      "/api/telemetry",
-      "/status.json"
+      "/api/gnss/gnssstats",
+      "/api/modem/lte_signal_info",
+      "/api/modem/modemstatus",
+      "/api/antenna/antennainfo"
     ]
   },
   "tle": {

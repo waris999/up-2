@@ -14,6 +14,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 def _to_float(val: Any) -> Optional[float]:
     if val is None or isinstance(val, bool):
         return None
+    if isinstance(val, str):
+        val = val.strip().rstrip("Mm")
     try:
         return float(val)
     except (TypeError, ValueError):
@@ -79,13 +81,10 @@ class IntellianClient:
         self.verify_ssl = verify_ssl
         self.timeout_sec = timeout_sec
         self.endpoints = endpoints or [
-            "/api/v1/status",
-            "/api/v1/ut/status",
-            "/api/v1/antenna/status",
-            "/api/v1/modem/status",
-            "/api/v1/gnss/status",
-            "/api/status",
-            "/status.json",
+            "/api/gnss/gnssstats",
+            "/api/modem/lte_signal_info",
+            "/api/modem/modemstatus",
+            "/api/antenna/antennainfo",
         ]
         self.session = requests.Session()
         if self.username and self.password:
@@ -155,25 +154,66 @@ class IntellianClient:
                 "raw": {},
             }
 
-        ut_lat = _to_float(_find_first_value(merged_raw, ("latitude", "lat", "ut_lat", "gps_lat")))
-        ut_lon = _to_float(_find_first_value(merged_raw, ("longitude", "lon", "lng", "ut_lon", "gps_lon")))
-        ut_alt_m = _to_float(_find_first_value(merged_raw, ("altitude", "alt", "ut_alt", "gps_alt")))
+        # 1. User Terminal GNSS position (prefer nmea_data from /api/gnss/gnssstats)
+        gnss = merged_raw.get("/api/gnss/gnssstats", {})
+        nmea = gnss.get("nmea_data", {}) if isinstance(gnss, dict) else {}
+        ut_lat = _to_float(nmea.get("latitude")) or _to_float(
+            _find_first_value(merged_raw, ("latitude", "lat", "ut_lat", "gps_lat"))
+        )
+        ut_lon = _to_float(nmea.get("longitude")) or _to_float(
+            _find_first_value(merged_raw, ("longitude", "lon", "lng", "ut_lon", "gps_lon"))
+        )
+        ut_alt_m = _to_float(nmea.get("altitude")) or _to_float(
+            _find_first_value(merged_raw, ("altitude", "alt", "ut_alt", "gps_alt"))
+        )
 
-        sat_id = _find_first_value(merged_raw, ("sat_id", "satellite_id", "norad_id", "sv_id"))
-        sat_name = _find_first_value(merged_raw, ("sat_name", "satellite_name", "satellite"))
-        sat_lat = _to_float(_find_first_value(merged_raw, ("sat_lat", "satellite_lat", "satellite_latitude", "subpoint_lat")))
-        sat_lon = _to_float(_find_first_value(merged_raw, ("sat_lon", "satellite_lon", "satellite_longitude", "subpoint_lon")))
-        sat_alt_km = _to_float(_find_first_value(merged_raw, ("sat_alt", "sat_alt_km", "satellite_alt", "satellite_altitude")))
-        sat_az = _to_float(_find_first_value(merged_raw, ("azimuth", "az", "sat_az", "pointing_az")))
-        sat_el = _to_float(_find_first_value(merged_raw, ("elevation", "el", "sat_el", "pointing_el")))
+        # 2. Antenna / UT identifier
+        ant = merged_raw.get("/api/antenna/antennainfo", {})
+        ut_code = None
+        if isinstance(ant, dict) and (ant.get("model") or ant.get("serial_number")):
+            ut_code = "{}-{}".format(
+                ant.get("model", "OW"), ant.get("serial_number", "unknown")
+            )
 
-        snr_db = _to_float(_find_first_value(merged_raw, ("snr", "snr_db", "rx_snr", "esno", "ebno")))
-        cn0_dbhz = _to_float(_find_first_value(merged_raw, ("cn0", "c_n0", "cn0_dbhz")))
-        rssi_dbm = _to_float(_find_first_value(merged_raw, ("rssi", "rssi_dbm", "rx_power", "signal_strength")))
-        link_state = _find_first_value(merged_raw, ("link_state", "state", "status", "modem_state", "ut_state"))
+        # 3. Modem & OneWeb satellite info (exclude gnssstats.sat_info which are GPS/GLONASS)
+        modem_status = merged_raw.get("/api/modem/modemstatus", {})
+        non_gnss_raw = {
+            k: v for k, v in merged_raw.items() if k != "/api/gnss/gnssstats"
+        }
+        sat_id = _find_first_value(non_gnss_raw, ("sat_id", "satellite_id", "norad_id", "sv_id"))
+        sat_name = _find_first_value(non_gnss_raw, ("sat_name", "satellite_name", "satellite"))
+        sat_lat = _to_float(_find_first_value(non_gnss_raw, ("sat_lat", "satellite_lat", "satellite_latitude", "subpoint_lat")))
+        sat_lon = _to_float(_find_first_value(non_gnss_raw, ("sat_lon", "satellite_lon", "satellite_longitude", "subpoint_lon")))
+        sat_alt_km = _to_float(_find_first_value(non_gnss_raw, ("sat_alt", "sat_alt_km", "satellite_alt", "satellite_altitude")))
+        sat_az = _to_float(_find_first_value(non_gnss_raw, ("azimuth", "az", "sat_az", "pointing_az")))
+        sat_el = _to_float(_find_first_value(non_gnss_raw, ("elevation", "el", "sat_el", "pointing_el")))
+
+        # 4. Signal strength (prefer /api/modem/lte_signal_info)
+        sig = merged_raw.get("/api/modem/lte_signal_info", {})
+        if not isinstance(sig, dict):
+            sig = {}
+        snr_db = _to_float(sig.get("sinr_dB"))
+        if snr_db is None:
+            snr_db = _to_float(_find_first_value(non_gnss_raw, ("sinr_dB", "snr", "snr_db", "rx_snr", "esno", "ebno")))
+        cn0_dbhz = _to_float(_find_first_value(non_gnss_raw, ("cn0", "c_n0", "cn0_dbhz")))
+        rssi_dbm = _to_float(sig.get("rssi_dBm"))
+        if rssi_dbm is None:
+            rssi_dbm = _to_float(_find_first_value(non_gnss_raw, ("rssi_dBm", "rssi", "rssi_dbm", "rx_power", "signal_strength")))
+
+        link_state = None
+        if isinstance(modem_status, dict) and modem_status.get("operating_mode"):
+            svc = modem_status.get("service_available")
+            link_state = "{}{}".format(
+                modem_status.get("operating_mode"),
+                " (service_available)" if svc else "",
+            )
+        if not link_state:
+            raw_state = _find_first_value(non_gnss_raw, ("link_state", "operating_mode", "state", "status", "modem_state", "ut_state"))
+            link_state = str(raw_state) if raw_state is not None else None
 
         return {
             "source": "intellian_live",
+            "ut_code": ut_code,
             "connected": True,
             "ut_lat": ut_lat,
             "ut_lon": ut_lon,
@@ -188,7 +228,7 @@ class IntellianClient:
             "snr_db": snr_db,
             "cn0_dbhz": cn0_dbhz,
             "rssi_dbm": rssi_dbm,
-            "link_state": str(link_state) if link_state is not None else None,
+            "link_state": link_state,
             "raw": merged_raw,
         }
 
