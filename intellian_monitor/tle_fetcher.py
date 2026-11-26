@@ -175,3 +175,87 @@ class TLEFetcher:
         alt_km = r_xy / math.cos(lat_rad) - n
 
         return (round(math.degrees(lat_rad), 6), round(lon, 6), round(alt_km, 3))
+
+    @staticmethod
+    def _geodetic_to_ecef(lat_deg: float, lon_deg: float, alt_km: float) -> Tuple[float, float, float]:
+        a = 6378.137
+        f = 1.0 / 298.257223563
+        e2 = f * (2.0 - f)
+        lat = math.radians(lat_deg)
+        lon = math.radians(lon_deg)
+        sin_lat = math.sin(lat)
+        cos_lat = math.cos(lat)
+        n = a / math.sqrt(1.0 - e2 * sin_lat * sin_lat)
+        x = (n + alt_km) * cos_lat * math.cos(lon)
+        y = (n + alt_km) * cos_lat * math.sin(lon)
+        z = (n * (1.0 - e2) + alt_km) * sin_lat
+        return (x, y, z)
+
+    def find_best_visible_satellite(
+        self,
+        ut_lat: float,
+        ut_lon: float,
+        ut_alt_m: Optional[float] = 0.0,
+        dt_utc: Optional[datetime] = None,
+    ) -> Optional[Dict[str, object]]:
+        """Find the highest-elevation OneWeb satellite from cached TLEs for the given UT position."""
+        if not HAS_SGP4 or not self._tle_by_norad:
+            return None
+
+        dt = dt_utc or datetime.now(timezone.utc)
+        jd, fr = jday(
+            dt.year,
+            dt.month,
+            dt.day,
+            dt.hour,
+            dt.minute,
+            dt.second + dt.microsecond / 1e6,
+        )
+        d = (jd - 2451545.0) + fr
+        gmst = math.radians((280.46061837 + 360.98564736629 * d) % 360.0)
+        cos_g = math.cos(gmst)
+        sin_g = math.sin(gmst)
+
+        ut_alt_km = (ut_alt_m or 0.0) / 1000.0
+        ux, uy, uz = self._geodetic_to_ecef(ut_lat, ut_lon, ut_alt_km)
+        lat_r = math.radians(ut_lat)
+        lon_r = math.radians(ut_lon)
+        sin_lat, cos_lat = math.sin(lat_r), math.cos(lat_r)
+        sin_lon, cos_lon = math.sin(lon_r), math.cos(lon_r)
+
+        best: Optional[Dict[str, object]] = None
+        best_el = -90.0
+
+        for norad_id, (name, l1, l2) in self._tle_by_norad.items():
+            sat = Satrec.twoline2rv(l1, l2)
+            err, r, _ = sat.sgp4(jd, fr)
+            if err != 0:
+                continue
+
+            sx = r[0] * cos_g + r[1] * sin_g
+            sy = -r[0] * sin_g + r[1] * cos_g
+            sz = r[2]
+
+            dx, dy, dz = sx - ux, sy - uy, sz - uz
+            east = -sin_lon * dx + cos_lon * dy
+            north = -sin_lat * cos_lon * dx - sin_lat * sin_lon * dy + cos_lat * dz
+            up = cos_lat * cos_lon * dx + cos_lat * sin_lon * dy + sin_lat * dz
+
+            el_deg = math.degrees(math.atan2(up, math.hypot(east, north)))
+            if el_deg > best_el:
+                best_el = el_deg
+                az_deg = math.degrees(math.atan2(east, north)) % 360.0
+                sub = self.compute_sat_subpoint(l1, l2, dt)
+                best = {
+                    "sat_id": norad_id,
+                    "sat_name": name,
+                    "tle_line1": l1,
+                    "tle_line2": l2,
+                    "sat_azimuth_deg": round(az_deg, 2),
+                    "sat_elevation_deg": round(el_deg, 2),
+                    "sat_lat": sub[0] if sub else None,
+                    "sat_lon": sub[1] if sub else None,
+                    "sat_alt_km": sub[2] if sub else None,
+                }
+
+        return best

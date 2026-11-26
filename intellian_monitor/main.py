@@ -116,19 +116,44 @@ def print_status(
 
 
 def enrich_with_tle(telemetry: Dict[str, Any], tle_fetcher: TLEFetcher) -> None:
-    """Attach matching TLE lines and compute satellite lat/lon/alt if missing."""
+    """Attach matching TLE lines and compute satellite lat/lon/alt/Az/El."""
     tle_match = tle_fetcher.find_satellite(
         sat_id=telemetry.get("sat_id"), sat_name=telemetry.get("sat_name")
     )
-    if not tle_match:
+    if tle_match:
+        telemetry["tle_line1"] = tle_match[1]
+        telemetry["tle_line2"] = tle_match[2]
+        if telemetry.get("sat_lat") is None or telemetry.get("sat_lon") is None:
+            subpoint = tle_fetcher.compute_sat_subpoint(tle_match[1], tle_match[2])
+            if subpoint is not None:
+                telemetry["sat_lat"], telemetry["sat_lon"], telemetry["sat_alt_km"] = subpoint
         return
 
-    telemetry["tle_line1"] = tle_match[1]
-    telemetry["tle_line2"] = tle_match[2]
-    if telemetry.get("sat_lat") is None or telemetry.get("sat_lon") is None:
-        subpoint = tle_fetcher.compute_sat_subpoint(tle_match[1], tle_match[2])
-        if subpoint is not None:
-            telemetry["sat_lat"], telemetry["sat_lon"], telemetry["sat_alt_km"] = subpoint
+    # If UT did not report active satellite ID, estimate highest-elevation OneWeb satellite from TLEs
+    if (
+        telemetry.get("ut_lat") is not None
+        and telemetry.get("ut_lon") is not None
+        and tle_fetcher.satellite_count > 0
+    ):
+        best = tle_fetcher.find_best_visible_satellite(
+            telemetry["ut_lat"],
+            telemetry["ut_lon"],
+            telemetry.get("ut_alt_m"),
+        )
+        if best:
+            for key in (
+                "sat_id",
+                "sat_name",
+                "tle_line1",
+                "tle_line2",
+                "sat_azimuth_deg",
+                "sat_elevation_deg",
+                "sat_lat",
+                "sat_lon",
+                "sat_alt_km",
+            ):
+                if telemetry.get(key) is None and best.get(key) is not None:
+                    telemetry[key] = best[key]
 
 
 def main() -> int:
